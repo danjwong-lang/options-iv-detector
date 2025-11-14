@@ -1,7 +1,7 @@
 """
-Options IV Mispricing Detector - Production Version
+Options IV Mispricing Detector - Production Version (Supabase Client)
 Dual API support: Yahoo Finance (primary) + Alpha Vantage (backup)
-Database: Supabase PostgreSQL
+Database: Supabase via REST API (more reliable than direct PostgreSQL)
 """
 
 import os
@@ -11,50 +11,32 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime
-import psycopg2
-from psycopg2.extras import execute_values
+from supabase import create_client, Client
 
 class OptionsIVCollector:
     def __init__(self):
         """Initialize with environment variables"""
         self.alpha_vantage_key = os.environ.get('ALPHA_VANTAGE_KEY')
         
-        # Supabase connection
-        self.db_host = os.environ.get('SUPABASE_HOST')
-        self.db_name = os.environ.get('SUPABASE_DB', 'postgres')
-        self.db_user = os.environ.get('SUPABASE_USER', 'postgres')
-        self.db_password = os.environ.get('SUPABASE_PASSWORD')
-        self.db_port = os.environ.get('SUPABASE_PORT', '5432')
+        # Supabase connection via REST API
+        supabase_url = os.environ.get('SUPABASE_URL')
+        supabase_key = os.environ.get('SUPABASE_KEY')
         
-        self.conn = None
+        if not supabase_url or not supabase_key:
+            raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
         
-    def connect_db(self):
-        """Connect to Supabase PostgreSQL"""
-        try:
-            self.conn = psycopg2.connect(
-                host=self.db_host,
-                database=self.db_name,
-                user=self.db_user,
-                password=self.db_password,
-                port=self.db_port
-            )
-            print("✅ Connected to Supabase database")
-            return True
-        except Exception as e:
-            print(f"❌ Database connection failed: {e}")
-            return False
-    
+        self.supabase: Client = create_client(supabase_url, supabase_key)
+        print("✅ Connected to Supabase")
+        
     def add_stock(self, ticker, name=None, sector=None):
         """Add stock to tracking list"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute("""
-                INSERT INTO stocks (ticker, name, sector)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (ticker) DO NOTHING
-            """, (ticker.upper(), name, sector))
-            self.conn.commit()
-            cursor.close()
+            data = {
+                'ticker': ticker.upper(),
+                'name': name,
+                'sector': sector
+            }
+            self.supabase.table('stocks').upsert(data, on_conflict='ticker').execute()
         except Exception as e:
             print(f"⚠️  Error adding {ticker}: {e}")
     
@@ -206,69 +188,57 @@ class OptionsIVCollector:
         return data
     
     def save_options_data(self, ticker, options_data):
-        """Save options data to database"""
+        """Save options data to Supabase"""
         if options_data is None:
             return
         
         try:
-            cursor = self.conn.cursor()
-            today = datetime.now().date()
+            today = datetime.now().date().isoformat()
             
-            # Save calls
-            for _, row in options_data['calls'].iterrows():
-                cursor.execute("""
-                    INSERT INTO options_data 
-                    (ticker, date, strike, expiration, option_type, bid, ask, last, 
-                     volume, open_interest, implied_volatility)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, date, strike, expiration, option_type) DO UPDATE
-                    SET bid = EXCLUDED.bid, ask = EXCLUDED.ask, last = EXCLUDED.last,
-                        volume = EXCLUDED.volume, open_interest = EXCLUDED.open_interest,
-                        implied_volatility = EXCLUDED.implied_volatility
-                """, (
-                    ticker, today,
-                    float(row.get('strike', 0)),
-                    options_data['expiration'],
-                    'call',
-                    float(row.get('bid', 0)),
-                    float(row.get('ask', 0)),
-                    float(row.get('lastPrice', row.get('last', 0))),
-                    int(row.get('volume', 0)),
-                    int(row.get('openInterest', row.get('open_interest', 0))),
-                    float(row.get('impliedVolatility', row.get('implied_volatility', 0)))
-                ))
+            # Prepare options records
+            records = []
             
-            # Save puts
-            for _, row in options_data['puts'].iterrows():
-                cursor.execute("""
-                    INSERT INTO options_data 
-                    (ticker, date, strike, expiration, option_type, bid, ask, last, 
-                     volume, open_interest, implied_volatility)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, date, strike, expiration, option_type) DO UPDATE
-                    SET bid = EXCLUDED.bid, ask = EXCLUDED.ask, last = EXCLUDED.last,
-                        volume = EXCLUDED.volume, open_interest = EXCLUDED.open_interest,
-                        implied_volatility = EXCLUDED.implied_volatility
-                """, (
-                    ticker, today,
-                    float(row.get('strike', 0)),
-                    options_data['expiration'],
-                    'put',
-                    float(row.get('bid', 0)),
-                    float(row.get('ask', 0)),
-                    float(row.get('lastPrice', row.get('last', 0))),
-                    int(row.get('volume', 0)),
-                    int(row.get('openInterest', row.get('open_interest', 0))),
-                    float(row.get('impliedVolatility', row.get('implied_volatility', 0)))
-                ))
+            # Process calls (limit to 50 to avoid timeouts)
+            for _, row in options_data['calls'].head(50).iterrows():
+                record = {
+                    'ticker': ticker,
+                    'date': today,
+                    'strike': float(row.get('strike', 0)),
+                    'expiration': str(options_data['expiration']),
+                    'option_type': 'call',
+                    'bid': float(row.get('bid', 0)),
+                    'ask': float(row.get('ask', 0)),
+                    'last': float(row.get('lastPrice', row.get('last', 0))),
+                    'volume': int(row.get('volume', 0)),
+                    'open_interest': int(row.get('openInterest', row.get('open_interest', 0))),
+                    'implied_volatility': float(row.get('impliedVolatility', row.get('implied_volatility', 0)))
+                }
+                records.append(record)
             
-            self.conn.commit()
-            cursor.close()
-            print(f"✅ Saved {ticker} to database")
+            # Process puts
+            for _, row in options_data['puts'].head(50).iterrows():
+                record = {
+                    'ticker': ticker,
+                    'date': today,
+                    'strike': float(row.get('strike', 0)),
+                    'expiration': str(options_data['expiration']),
+                    'option_type': 'put',
+                    'bid': float(row.get('bid', 0)),
+                    'ask': float(row.get('ask', 0)),
+                    'last': float(row.get('lastPrice', row.get('last', 0))),
+                    'volume': int(row.get('volume', 0)),
+                    'open_interest': int(row.get('openInterest', row.get('open_interest', 0))),
+                    'implied_volatility': float(row.get('impliedVolatility', row.get('implied_volatility', 0)))
+                }
+                records.append(record)
+            
+            # Upsert to Supabase
+            if records:
+                self.supabase.table('options_data').upsert(records, on_conflict='ticker,date,strike,expiration,option_type').execute()
+                print(f"✅ Saved {len(records)} option contracts for {ticker}")
             
         except Exception as e:
             print(f"❌ Error saving {ticker}: {e}")
-            self.conn.rollback()
     
     def calculate_historical_volatility(self, ticker, days=30):
         """Calculate HV using Yahoo Finance"""
@@ -290,24 +260,19 @@ class OptionsIVCollector:
     def calculate_iv_rank(self, ticker):
         """Calculate IV Rank from historical data"""
         try:
-            cursor = self.conn.cursor()
+            # Get historical IV data from Supabase
+            response = self.supabase.table('options_data')\
+                .select('implied_volatility')\
+                .eq('ticker', ticker)\
+                .eq('option_type', 'call')\
+                .gte('date', (datetime.now().date() - pd.Timedelta(days=365)).isoformat())\
+                .order('date', desc=True)\
+                .execute()
             
-            cursor.execute("""
-                SELECT implied_volatility
-                FROM options_data
-                WHERE ticker = %s
-                AND date >= CURRENT_DATE - INTERVAL '365 days'
-                AND option_type = 'call'
-                ORDER BY date DESC
-            """, (ticker,))
-            
-            rows = cursor.fetchall()
-            cursor.close()
-            
-            if len(rows) < 10:
+            if not response.data or len(response.data) < 10:
                 return None
             
-            iv_values = [row[0] for row in rows if row[0] is not None]
+            iv_values = [row['implied_volatility'] for row in response.data if row['implied_volatility']]
             
             if not iv_values:
                 return None
@@ -356,34 +321,25 @@ class OptionsIVCollector:
         iv_hv_diff = current_iv - hv_30d if hv_30d else None
         
         # Save IV analysis
-        if iv_metrics:
+        if iv_metrics or hv_30d:
             try:
-                cursor = self.conn.cursor()
-                today = datetime.now().date()
+                today = datetime.now().date().isoformat()
                 
-                cursor.execute("""
-                    INSERT INTO historical_iv
-                    (ticker, date, current_iv, iv_rank, hv_30d, iv_hv_diff, 
-                     iv_52w_high, iv_52w_low)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (ticker, date) DO UPDATE
-                    SET current_iv = EXCLUDED.current_iv,
-                        iv_rank = EXCLUDED.iv_rank,
-                        hv_30d = EXCLUDED.hv_30d,
-                        iv_hv_diff = EXCLUDED.iv_hv_diff,
-                        iv_52w_high = EXCLUDED.iv_52w_high,
-                        iv_52w_low = EXCLUDED.iv_52w_low
-                """, (
-                    ticker, today, current_iv, iv_metrics['iv_rank'],
-                    hv_30d, iv_hv_diff,
-                    iv_metrics['iv_52w_high'], iv_metrics['iv_52w_low']
-                ))
+                record = {
+                    'ticker': ticker,
+                    'date': today,
+                    'current_iv': float(current_iv),
+                    'iv_rank': float(iv_metrics['iv_rank']) if iv_metrics else None,
+                    'hv_30d': float(hv_30d) if hv_30d else None,
+                    'iv_hv_diff': float(iv_hv_diff) if iv_hv_diff else None,
+                    'iv_52w_high': float(iv_metrics['iv_52w_high']) if iv_metrics else None,
+                    'iv_52w_low': float(iv_metrics['iv_52w_low']) if iv_metrics else None
+                }
                 
-                self.conn.commit()
-                cursor.close()
+                self.supabase.table('historical_iv').upsert(record, on_conflict='ticker,date').execute()
+                
             except Exception as e:
                 print(f"⚠️  Error saving IV analysis: {e}")
-                self.conn.rollback()
         
         # Print summary
         print(f"\n✅ {ticker} Analysis Complete:")
@@ -427,30 +383,18 @@ class OptionsIVCollector:
         print(f"{'='*60}\n")
         
         return results
-    
-    def close(self):
-        """Close database connection"""
-        if self.conn:
-            self.conn.close()
-            print("✅ Database connection closed")
 
 
 if __name__ == "__main__":
-    # Watchlist - all 18 stocks
+    # Watchlist - all 12 stocks
     watchlist = [
         # Mag 7
         'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'META', 'TSLA',
         # ETFs and others
         'SPY', 'QQQ', 'AMD', 'PLTR', 'SOXL'
-        # Note: Removed METU, TEM, CRWV, NAIL, AMZU, NVDL (invalid tickers or no options)
     ]
     
     collector = OptionsIVCollector()
-    
-    # Connect to database
-    if not collector.connect_db():
-        print("❌ Failed to connect to database. Exiting.")
-        exit(1)
     
     # Add stocks to database
     print("\nAdding stocks to database...")
@@ -459,6 +403,3 @@ if __name__ == "__main__":
     
     # Run daily update
     collector.run_daily_update(watchlist)
-    
-    # Close connection
-    collector.close()

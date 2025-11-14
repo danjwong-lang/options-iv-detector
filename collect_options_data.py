@@ -24,7 +24,7 @@ class OptionsIVCollector:
         self.db_name = os.environ.get('SUPABASE_DB', 'postgres')
         self.db_user = os.environ.get('SUPABASE_USER', 'postgres')
         self.db_password = os.environ.get('SUPABASE_PASSWORD')
-        self.db_port = os.environ.get('SUPABASE_PORT', '6543')
+        self.db_port = os.environ.get('SUPABASE_PORT', '5432')
         
         self.conn = None
         

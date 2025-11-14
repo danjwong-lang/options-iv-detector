@@ -37,7 +37,7 @@ jobs:
         export SUPABASE_HOST
         export SUPABASE_DB=postgres
         export SUPABASE_USER=postgres
-        export SUPABASE_PORT=6543
+        export SUPABASE_PORT=5432
         
         echo "Running options data collection..."
         python collect_options_data.py

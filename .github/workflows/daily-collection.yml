@@ -25,20 +25,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Parse Supabase URL and run data collection
+    - name: Run data collection
       env:
         SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
         SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        SUPABASE_PASSWORD: ${{ secrets.SUPABASE_PASSWORD }}
         ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
       run: |
-        # Extract host from Supabase URL
-        SUPABASE_HOST=$(echo $SUPABASE_URL | sed 's|https://||' | sed 's|http://||')
-        export SUPABASE_HOST
-        export SUPABASE_DB=postgres
-        export SUPABASE_USER=postgres
-        export SUPABASE_PORT=5432
-        
         echo "Running options data collection..."
         python collect_options_data.py
-    

@@ -1,0 +1,53 @@
+name: Daily Options Data Collection
+
+on:
+  schedule:
+    # Runs at 1:30 PM PST (9:30 PM UTC) Monday-Friday
+    - cron: '30 21 * * 1-5'
+  
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  collect-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Parse Supabase URL and run data collection
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        SUPABASE_PASSWORD: ${{ secrets.SUPABASE_PASSWORD }}
+        ALPHA_VANTAGE_KEY: ${{ secrets.ALPHA_VANTAGE_KEY }}
+      run: |
+        # Extract host from Supabase URL
+        SUPABASE_HOST=$(echo $SUPABASE_URL | sed 's|https://||' | sed 's|http://||')
+        export SUPABASE_HOST
+        export SUPABASE_DB=postgres
+        export SUPABASE_USER=postgres
+        export SUPABASE_PORT=6543
+        
+        echo "Running options data collection..."
+        python collect_options_data.py
+    
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: collection-logs
+        path: |
+          *.log
+          *.txt
+        retention-days: 7

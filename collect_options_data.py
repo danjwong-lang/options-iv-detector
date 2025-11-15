@@ -386,12 +386,19 @@ class OptionsIVCollector:
 
 
 if __name__ == "__main__":
-    # Watchlist - all 12 stocks
+    # Watchlist - 25 stocks
     watchlist = [
         # Mag 7
         'AAPL', 'MSFT', 'GOOG', 'AMZN', 'NVDA', 'META', 'TSLA',
-        # ETFs and others
-        'SPY', 'QQQ', 'AMD', 'PLTR', 'SOXL'
+        # Tech/Semiconductors
+        'AMD', 'AVGO', 'TSM', 'ORCL', 'CRM',
+        # Leveraged ETFs
+        'SOXL', 'TSLL', 'NVDL', 'TQQQ',
+        # ETFs
+        'SPY', 'QQQ',
+        # Others
+        'PLTR', 'NAIL', 'METU', 'AMZU', 'GGLL', 'TEM', 'CRWV'
+    
     ]
     
     collector = OptionsIVCollector()

@@ -122,3 +122,5 @@ Goal: Optimize options premium selling with data-driven timing
 ---
 
 **Remember:** This tool tells you WHEN to sell premium, not WHICH stocks to trade. Use it to time your existing covered call and CSP strategies.
+
+Last updated: January 2026
